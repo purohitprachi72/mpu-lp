@@ -1,0 +1,166 @@
+#include <MPU9250_WE.h>
+#include <Wire.h>
+#include <Adafruit_SPIFlash.h>  // Need to be deleted /Documents/Arduino/libraries/SdFat
+
+#define MPU9250_ADDR 0x68
+
+const int intPin = 2;
+volatile bool motion = false;
+
+MPU9250_WE myMPU9250 = MPU9250_WE(MPU9250_ADDR);
+Adafruit_FlashTransport_QSPI flashTransport;
+
+// Interrupt handler function
+// void motionDetected() {
+//   // Wake up MPU9250
+//   myMPU9250.sleep(false);
+
+//   // Read accelerometer data
+//   xyzFloat accRaw = myMPU9250.getAccRawValues();
+//   xyzFloat gValue = myMPU9250.getGValues();
+//   float resultantG = myMPU9250.getResultantG(gValue);
+
+//   // Print the accelerometer data
+//   Serial.println("Motion detected!");
+//   Serial.print("Raw acceleration values (x,y,z): ");
+//   Serial.print(accRaw.x);
+//   Serial.print(", ");
+//   Serial.print(accRaw.y);
+//   Serial.print(", ");
+//   Serial.println(accRaw.z);
+
+//   Serial.print("g values (x,y,z): ");
+//   Serial.print(gValue.x);
+//   Serial.print(", ");
+//   Serial.print(gValue.y);
+//   Serial.print(", ");
+//   Serial.println(gValue.z);
+
+//   Serial.print("Resultant g: ");
+//   Serial.println(resultantG);
+
+//   // Optionally put MPU9250 back to sleep after reading data
+//   // myMPU9250.sleep(true);
+// }
+
+void setup() {
+  Serial.begin(115200);
+
+  while(!Serial) delay(10);
+  // Power configuration for nRF52840
+  NRF_POWER->DCDCEN = 1;
+  delay(1000);
+
+  // Onboard Flash enter to Deep Power-Down Mode
+  flashTransport.begin();
+  flashTransport.runCommand(0xB9);  // enter deep power-down mode
+  delayMicroseconds(5);             // tDP=3uS
+  flashTransport.end();
+
+  // Initialize I2C communication
+  Wire.begin();
+
+  // Initialize MPU9250
+  if (!myMPU9250.init()) {
+    Serial.println("MPU9250 does not respond");
+  } else {
+    Serial.println("MPU9250 is connected");
+  }
+  
+  Serial.println("Position your MPU9250 flat and don't move it - calibrating...");
+  delay(1000);
+  myMPU9250.autoOffsets();
+  Serial.println("Done!");
+
+  // myMPU9250.setSampleRateDivider(5);
+
+  // Configure accelerometer range
+  myMPU9250.setAccRange(MPU9250_ACC_RANGE_2G);
+
+  myMPU9250.enableAccDLPF(true);
+  // *   DLPF     Bandwidth [Hz]      Delay [ms]    Output rate [kHz]
+  // *     6             5              66.96           1
+  myMPU9250.setAccDLPF(MPU9250_DLPF_6);
+  
+  // Set low power accelerometer data rate
+  myMPU9250.setLowPowerAccDataRate(MPU9250_LP_ACC_ODR_0_98);
+  
+  // Enable motion detection interrupt
+  myMPU9250.setIntPinPolarity(MPU9250_ACT_HIGH); // Set interrupt pin to active high
+  myMPU9250.enableIntLatch(true);   
+  myMPU9250.enableClearIntByAnyRead(false); 
+  // Enable Wake-on-Motion (WoM) interrupt
+  myMPU9250.enableInterrupt(MPU9250_WOM_INT);
+  myMPU9250.setWakeOnMotionThreshold(128); // Set motion detection threshold
+  /*  Enable/disable wake on motion (WOM) and  WOM mode:
+   *  MPU9250_WOM_DISABLE
+   *  MPU9250_WOM_ENABLE
+   *  ***
+   *  MPU9250_WOM_COMP_DISABLE   // reference is the starting value
+   *  MPU9250_WOM_COMP_ENABLE    // reference is the last value
+   */
+  myMPU9250.enableWakeOnMotion(MPU9250_WOM_ENABLE, MPU9250_WOM_COMP_DISABLE);
+  
+  // Put MPU9250 to sleep
+  // myMPU9250.sleep(true);
+  // Serial.println("MPU9250 is in sleep mode. Waiting for motion to wake it up...");
+
+  // Set up the interrupt pin
+  // pinMode(INT_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(intPin), motionISR, RISING);
+  Serial.println("Turn your MPU9250 and see what happens...");
+}
+
+void loop() {
+  xyzFloat gValue, accRaw;
+
+  // if(motion){
+  //   byte source = myMPU9250.readAndClearInterrupts();
+  //   Serial.println("Interrupt!");
+  //   if(myMPU9250.checkInterrupt(source, MPU9250_WOM_INT)){
+  //     Serial.println("Interrupt Type: Motion");
+  //     delay(1000);
+  //   }
+  //   motion = false;
+  //   // if additional interrupts have occured in the meantime:
+  //   myMPU9250.readAndClearInterrupts(); 
+  // }
+
+  if(motion){
+    motion = false;
+    
+    // Read accelerometer data
+    xyzFloat accRaw = myMPU9250.getAccRawValues();
+    xyzFloat gValue = myMPU9250.getGValues();
+    float resultantG = myMPU9250.getResultantG(gValue);
+
+    // Print the accelerometer data
+    Serial.println("Motion detected!");
+    Serial.print("Raw acceleration values (x,y,z): ");
+    Serial.print(accRaw.x);
+    Serial.print(", ");
+    Serial.print(accRaw.y);
+    Serial.print(", ");
+    Serial.println(accRaw.z);
+    
+    Serial.print("g values (x,y,z): ");
+    Serial.print(gValue.x);
+    Serial.print(", ");
+    Serial.print(gValue.y);
+    Serial.print(", ");
+    Serial.println(gValue.z);
+
+    Serial.print("Resultant g: ");
+    Serial.println(resultantG);
+
+    // delay(1000);
+
+    // Clear any additional interrupts that may have occurred
+    myMPU9250.readAndClearInterrupts();
+  }
+delay(10);
+}
+
+void motionISR() {
+  motion = true;
+}
